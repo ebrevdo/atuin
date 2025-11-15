@@ -16,5 +16,6 @@ tracing = { workspace = true }
 time = { workspace = true }
 eyre = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 async-trait = { workspace = true }
 url = "2.5.2"

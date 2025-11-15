@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Breaking-ish (server auth)
+- Server auth now has explicit modes: password-only (default) vs external providers. To use external IdPs, set `auth.allow_password = false` and list `auth.providers` in `server.toml`; `auth.default_provider` picks a preferred one when multiple exist.
+- Provider config supports `oidc` and `oauth2` kinds with `device_code` (default) or `auth_code_pkce` flows, subject claim selection, and optional claim/issuer/audience guards. Cached metadata/JWKS live under `<data dir>/auth-cache` by default; override via `auth.cache_dir` / `auth.cache_max_bytes`.
+- Clients now follow the server’s advertised providers; use `atuin login --provider <name>` or `auth.provider` in client config when multiple choices exist.
+
 ## [18.10.0] - 2025-10-21
 
 ### Bug Fixes

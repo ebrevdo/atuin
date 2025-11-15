@@ -30,6 +30,9 @@ spec:
               value: "8888"
             - name: ATUIN_OPEN_REGISTRATION
               value: "true"
+            # When using external providers, disable passwords and mount a server.toml with auth.providers
+            # - name: ATUIN_AUTH_ALLOW_PASSWORD
+            #   value: "false"
           image: ghcr.io/atuinsh/atuin:latest
           name: atuin
           ports:
@@ -60,7 +63,7 @@ spec:
             periodSeconds: 10
           volumeMounts:
             - mountPath: /config
-              name: atuin-claim0
+              name: atuin-claim0 # include server.toml (auth.allow_password/auth.providers)
         - name: postgresql
           image: postgres:14
           ports:

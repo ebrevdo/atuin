@@ -1,3 +1,4 @@
+use serde_json::Value;
 use time::OffsetDateTime;
 
 pub struct History {
@@ -50,4 +51,21 @@ pub struct NewUser {
 pub struct NewSession {
     pub user_id: i64,
     pub token: String,
+}
+
+pub struct ExternalIdentity {
+    pub id: i64,
+    pub user_id: i64,
+    pub provider: String,
+    pub subject: String,
+    pub display_claims: Option<Value>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+pub struct NewExternalIdentity {
+    pub user_id: i64,
+    pub provider: String,
+    pub subject: String,
+    pub display_claims: Option<Value>,
 }

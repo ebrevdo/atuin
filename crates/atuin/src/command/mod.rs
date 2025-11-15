@@ -10,6 +10,9 @@ mod client;
 #[cfg(feature = "server")]
 mod server;
 
+#[cfg(feature = "server")]
+mod admin;
+
 mod contributors;
 
 mod gen_completions;
@@ -28,6 +31,11 @@ pub enum AtuinCmd {
     #[cfg(feature = "server")]
     #[command(subcommand)]
     Server(server::Cmd),
+
+    /// Administrative tasks for the server database
+    #[cfg(feature = "server")]
+    #[command(subcommand)]
+    Admin(admin::Cmd),
 
     /// Generate a UUID
     Uuid,
@@ -57,6 +65,8 @@ impl AtuinCmd {
 
             #[cfg(feature = "server")]
             Self::Server(server) => server.run(),
+            #[cfg(feature = "server")]
+            Self::Admin(admin) => admin.run(),
             Self::Contributors => {
                 contributors::run();
                 Ok(())

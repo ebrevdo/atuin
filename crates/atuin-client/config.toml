@@ -163,6 +163,22 @@ enter_accept = true
 ## Defaults to false. If enabled, when triggered after &&, || or |, Atuin will complete commands to chain rather than replace the current line.
 # command_chaining = false
 
+## Authentication configuration
+# [auth]
+# # Client-side overrides are optional; the server dictates which authentication
+# # method and flow are active. Use overrides only when you need to supply custom
+# # endpoints or client identifiers for self-hosted setups.
+# # Set redirect_port if your identity provider requires a pre-registered
+# # loopback redirect URI (for example, GitHub device/PKCE logins).
+# # redirect_port = 8400
+# # provider = "azure-ad" # optional name to auto-select when multiple are available
+#
+# [[auth.providers]]
+# name = "azure-ad"
+# issuer = "https://login.microsoftonline.com/{tenant-id}/v2.0"
+# client_id = ""
+# scopes = ["openid", "profile", "offline_access"]
+
 ## Defaults to "emacs".  This specifies the keymap on the startup of `atuin
 ## search`.  If this is set to "auto", the startup keymap mode in the Atuin
 ## search is automatically selected based on the shell's keymap where the

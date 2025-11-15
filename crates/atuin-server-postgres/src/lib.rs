@@ -6,16 +6,18 @@ use rand::Rng;
 use async_trait::async_trait;
 use atuin_common::record::{EncryptedData, HostId, Record, RecordIdx, RecordStatus};
 use atuin_common::utils::crypto_random_string;
-use atuin_server_database::models::{History, NewHistory, NewSession, NewUser, Session, User};
+use atuin_server_database::models::{
+    ExternalIdentity, History, NewExternalIdentity, NewHistory, NewSession, NewUser, Session, User,
+};
 use atuin_server_database::{Database, DbError, DbResult, DbSettings};
 use futures_util::TryStreamExt;
-use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{Row, types::Json};
 
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use tracing::{instrument, trace};
 use uuid::Uuid;
-use wrappers::{DbHistory, DbRecord, DbSession, DbUser};
+use wrappers::{DbExternalIdentity, DbHistory, DbRecord, DbSession, DbUser};
 
 mod wrappers;
 
@@ -88,6 +90,16 @@ impl Database for Postgres {
         .await
         .map_err(fix_error)
         .map(|DbUser(user)| user)
+    }
+
+    #[instrument(skip_all)]
+    async fn get_user_by_id(&self, id: i64) -> DbResult<User> {
+        sqlx::query_as("select id, username, email, password, verified_at from users where id = $1")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(fix_error)
+            .map(|DbUser(user)| user)
     }
 
     #[instrument(skip_all)]
@@ -256,6 +268,53 @@ impl Database for Postgres {
         tx.commit().await.map_err(fix_error)?;
 
         Ok(())
+    }
+
+    async fn get_external_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> DbResult<ExternalIdentity> {
+        sqlx::query_as(
+            "select id, user_id, provider, subject, display_claims, created_at, updated_at
+            from external_identities where provider = $1 and subject = $2",
+        )
+        .bind(provider)
+        .bind(subject)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(fix_error)
+        .map(|DbExternalIdentity(identity)| identity)
+    }
+
+    async fn list_external_identities(&self, user_id: i64) -> DbResult<Vec<ExternalIdentity>> {
+        sqlx::query_as(
+            "select id, user_id, provider, subject, display_claims, created_at, updated_at
+            from external_identities where user_id = $1 order by created_at asc",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(fix_error)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|DbExternalIdentity(identity)| identity)
+                .collect()
+        })
+    }
+
+    async fn unlink_external_identity(&self, identity_id: i64) -> DbResult<()> {
+        let result = sqlx::query("delete from external_identities where id = $1")
+            .bind(identity_id)
+            .execute(&self.pool)
+            .await
+            .map_err(fix_error)?;
+
+        if result.rows_affected() == 0 {
+            Err(DbError::NotFound)
+        } else {
+            Ok(())
+        }
     }
 
     async fn delete_history(&self, user: &User, id: String) -> DbResult<()> {
@@ -457,6 +516,27 @@ impl Database for Postgres {
         .bind(username)
         .bind(email)
         .bind(password)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(fix_error)?;
+
+        Ok(res.0)
+    }
+
+    #[instrument(skip_all)]
+    async fn link_external_identity(&self, identity: &NewExternalIdentity) -> DbResult<i64> {
+        let claims_json = identity.display_claims.clone().map(Json);
+
+        let res: (i64,) = sqlx::query_as(
+            "insert into external_identities
+                (user_id, provider, subject, display_claims)
+            values ($1, $2, $3, $4)
+            returning id",
+        )
+        .bind(identity.user_id)
+        .bind(identity.provider.as_str())
+        .bind(identity.subject.as_str())
+        .bind(claims_json)
         .fetch_one(&self.pool)
         .await
         .map_err(fix_error)?;

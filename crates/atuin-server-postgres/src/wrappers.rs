@@ -1,13 +1,15 @@
 use ::sqlx::{FromRow, Result};
 use atuin_common::record::{EncryptedData, Host, Record};
-use atuin_server_database::models::{History, Session, User};
-use sqlx::{Row, postgres::PgRow};
+use atuin_server_database::models::{ExternalIdentity, History, Session, User};
+use serde_json::Value;
+use sqlx::{Row, postgres::PgRow, types::Json};
 use time::PrimitiveDateTime;
 
 pub struct DbUser(pub User);
 pub struct DbSession(pub Session);
 pub struct DbHistory(pub History);
 pub struct DbRecord(pub Record<EncryptedData>);
+pub struct DbExternalIdentity(pub ExternalIdentity);
 
 impl<'a> FromRow<'a, PgRow> for DbUser {
     fn from_row(row: &'a PgRow) -> Result<Self> {
@@ -74,5 +76,25 @@ impl<'a> ::sqlx::FromRow<'a, PgRow> for DbRecord {
 impl From<DbRecord> for Record<EncryptedData> {
     fn from(other: DbRecord) -> Record<EncryptedData> {
         Record { ..other.0 }
+    }
+}
+
+impl<'a> FromRow<'a, PgRow> for DbExternalIdentity {
+    fn from_row(row: &'a PgRow) -> Result<Self> {
+        Ok(Self(ExternalIdentity {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            provider: row.try_get("provider")?,
+            subject: row.try_get("subject")?,
+            display_claims: row
+                .try_get::<Option<Json<Value>>, _>("display_claims")?
+                .map(|Json(value)| value),
+            created_at: row
+                .try_get::<PrimitiveDateTime, _>("created_at")?
+                .assume_utc(),
+            updated_at: row
+                .try_get::<PrimitiveDateTime, _>("updated_at")?
+                .assume_utc(),
+        }))
     }
 }

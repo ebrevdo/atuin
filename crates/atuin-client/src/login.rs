@@ -82,7 +82,7 @@ pub async fn login(
 
     let session = api_client::login(
         settings.sync_address.as_str(),
-        LoginRequest { username, password },
+        LoginRequest::Password { username, password },
     )
     .await?;
 

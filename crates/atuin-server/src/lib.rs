@@ -7,8 +7,9 @@ use atuin_server_database::Database;
 use axum::{Router, serve};
 use axum_server::Handle;
 use axum_server::tls_rustls::RustlsConfig;
-use eyre::{Context, Result, eyre};
+use eyre::{Context, Report, Result, eyre};
 
+mod auth;
 mod handlers;
 mod metrics;
 mod router;
@@ -21,6 +22,7 @@ pub mod settings;
 
 use tokio::net::TcpListener;
 use tokio::signal;
+use tokio_util::sync::CancellationToken;
 
 #[cfg(target_family = "unix")]
 async fn shutdown_signal() {
@@ -65,11 +67,17 @@ pub async fn launch_with_tcp_listener<Db: Database>(
     listener: TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    let r = make_router::<Db>(settings).await?;
+    let (r, metadata_shutdown) = make_router::<Db>(settings).await?;
 
-    serve(listener, r.into_make_service())
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    let shutdown_token = metadata_shutdown.clone();
+    let result = serve(listener, r.into_make_service())
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            shutdown_token.cancel();
+        })
+        .await;
+    metadata_shutdown.cancel();
+    result?;
 
     Ok(())
 }
@@ -93,7 +101,7 @@ async fn launch_with_tls<Db: Database>(
     }
     let rustls_config = rustls_config.unwrap();
 
-    let r = make_router::<Db>(settings).await?;
+    let (r, metadata_shutdown) = make_router::<Db>(settings).await?;
 
     let handle = Handle::new();
 
@@ -101,12 +109,16 @@ async fn launch_with_tls<Db: Database>(
         .handle(handle.clone())
         .serve(r.into_make_service());
 
+    let shutdown_token = metadata_shutdown.clone();
     tokio::select! {
         _ = server => {}
         _ = shutdown => {
+            shutdown_token.cancel();
             handle.graceful_shutdown(None);
         }
     }
+
+    metadata_shutdown.cancel();
 
     Ok(())
 }
@@ -132,10 +144,15 @@ pub async fn launch_metrics_server(host: String, port: u16) -> Result<()> {
     Ok(())
 }
 
-async fn make_router<Db: Database>(settings: Settings) -> Result<Router, eyre::Error> {
+async fn make_router<Db: Database>(
+    settings: Settings,
+) -> Result<(Router, CancellationToken), eyre::Error> {
     let db = Db::new(&settings.db_settings)
         .await
         .wrap_err_with(|| format!("failed to connect to db: {:?}", settings.db_settings))?;
-    let r = router::router(db, settings);
-    Ok(r)
+    let auth = auth::AuthRuntime::from_settings(&settings.auth).map_err(Report::from)?;
+    let token = CancellationToken::new();
+    auth.spawn_metadata_refresh_task(token.clone());
+    let r = router::router(db, settings, auth);
+    Ok((r, token))
 }

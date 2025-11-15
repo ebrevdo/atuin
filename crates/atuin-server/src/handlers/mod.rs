@@ -4,6 +4,7 @@ use axum::{Json, extract::State, http, response::IntoResponse};
 
 use crate::router::AppState;
 
+pub mod auth;
 pub mod health;
 pub mod history;
 pub mod record;
@@ -39,6 +40,7 @@ impl IntoResponse for ErrorResponseStatus<'_> {
     }
 }
 
+#[derive(Debug)]
 pub struct ErrorResponseStatus<'a> {
     pub error: ErrorResponse<'a>,
     pub status: http::StatusCode,

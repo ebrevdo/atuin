@@ -10,6 +10,8 @@ use command::AtuinCmd;
 
 mod command;
 
+mod runtime;
+
 #[cfg(feature = "sync")]
 mod sync;
 

@@ -1,5 +1,10 @@
 use std::{
-    collections::HashMap, convert::TryFrom, fmt, io::prelude::*, path::PathBuf, str::FromStr,
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    fmt,
+    io::prelude::*,
+    path::PathBuf,
+    str::FromStr,
 };
 
 use atuin_common::record::HostId;
@@ -11,15 +16,18 @@ use config::{
 use eyre::{Context, Error, Result, bail, eyre};
 use fs_err::{File, create_dir_all};
 use humantime::parse_duration;
+use log::warn;
 use regex::RegexSet;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_with::DeserializeFromStr;
+use thiserror::Error;
 use time::{
     OffsetDateTime, UtcOffset,
     format_description::{FormatItem, well_known::Rfc3339},
     macros::format_description,
 };
+use url::Url;
 use uuid::Uuid;
 
 pub const HISTORY_PAGE_SIZE: i64 = 100;
@@ -535,18 +543,22 @@ pub struct Settings {
 
     #[serde(default)]
     pub kv: kv::Settings,
+
+    #[serde(default)]
+    pub auth: AuthClientSettings,
 }
 
 impl Settings {
     pub fn utc() -> Self {
-        Self::builder()
+        let settings = Self::builder()
             .expect("Could not build default")
             .set_override("timezone", "0")
             .expect("failed to override timezone with UTC")
             .build()
             .expect("Could not build config")
             .try_deserialize()
-            .expect("Could not deserialize config")
+            .expect("Could not deserialize config");
+        Self::finalize(settings).expect("Could not finalize config")
     }
 
     fn save_to_data_dir(filename: &str, value: &str) -> Result<()> {
@@ -884,24 +896,30 @@ impl Settings {
         };
 
         let config = config_builder.build()?;
-        let mut settings: Settings = config
+        let settings: Settings = config
             .try_deserialize()
             .map_err(|e| eyre!("failed to deserialize: {}", e))?;
-
-        // all paths should be expanded
-        settings.db_path = Self::expand_path(settings.db_path)?;
-        settings.record_store_path = Self::expand_path(settings.record_store_path)?;
-        settings.key_path = Self::expand_path(settings.key_path)?;
-        settings.session_path = Self::expand_path(settings.session_path)?;
-        settings.daemon.socket_path = Self::expand_path(settings.daemon.socket_path)?;
-
-        Ok(settings)
+        Self::finalize(settings)
     }
 
     fn expand_path(path: String) -> Result<String> {
         shellexpand::full(&path)
             .map(|p| p.to_string())
             .map_err(|e| eyre!("failed to expand path: {}", e))
+    }
+
+    fn finalize(mut settings: Settings) -> Result<Settings> {
+        settings.db_path = Self::expand_path(settings.db_path)?;
+        settings.record_store_path = Self::expand_path(settings.record_store_path)?;
+        settings.key_path = Self::expand_path(settings.key_path)?;
+        settings.session_path = Self::expand_path(settings.session_path)?;
+        settings.daemon.socket_path = Self::expand_path(settings.daemon.socket_path)?;
+        settings.auth.warn_on_deprecated_keys();
+        settings
+            .auth
+            .validate()
+            .map_err(|err| eyre!("invalid auth override configuration: {}", err))?;
+        Ok(settings)
     }
 
     pub fn example_config() -> &'static str {
@@ -921,15 +939,129 @@ impl Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        // if this panics something is very wrong, as the default config
-        // does not build or deserialize into the settings struct
-        Self::builder()
+        let settings = Self::builder()
             .expect("Could not build default")
             .build()
             .expect("Could not build config")
             .try_deserialize()
-            .expect("Could not deserialize config")
+            .expect("Could not deserialize config");
+        Self::finalize(settings).expect("Could not finalize config")
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AuthClientSettings {
+    #[serde(default)]
+    pub providers: Vec<AuthProviderOverride>,
+    #[serde(default)]
+    pub redirect_port: Option<u16>,
+    #[serde(default, alias = "preferred_provider")]
+    pub provider: Option<String>,
+    #[serde(default, rename = "method", skip_serializing)]
+    legacy_method: Option<String>,
+}
+
+#[derive(Debug, Error)]
+pub enum AuthClientSettingsError {
+    #[error("auth.providers overrides must have non-empty name (entry #{index})")]
+    EmptyOverrideName { index: usize },
+    #[error("duplicate auth.providers override '{name}'")]
+    DuplicateOverrideName { name: String },
+}
+
+impl AuthClientSettings {
+    pub fn provider_override(&self, name: &str) -> Option<&AuthProviderOverride> {
+        self.providers.iter().find(|p| p.name == name)
+    }
+
+    pub fn redirect_port(&self) -> Option<u16> {
+        self.redirect_port.filter(|port| *port != 0)
+    }
+
+    pub fn provider(&self) -> Option<&str> {
+        self.provider.as_deref()
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), AuthClientSettingsError> {
+        let mut seen = HashSet::new();
+
+        for (index, provider) in self.providers.iter().enumerate() {
+            if provider.name.trim().is_empty() {
+                return Err(AuthClientSettingsError::EmptyOverrideName { index });
+            }
+
+            if !seen.insert(provider.name.clone()) {
+                return Err(AuthClientSettingsError::DuplicateOverrideName {
+                    name: provider.name.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn warn_on_deprecated_keys(&self) {
+        for field in self.deprecated_fields() {
+            warn!(
+                "ignoring deprecated auth.{field} value; the server now decides which authentication method to use"
+            );
+        }
+    }
+
+    fn deprecated_fields(&self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        if self.legacy_method.is_some() {
+            fields.push("method");
+        }
+        fields
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_deprecated(method: Option<&str>) -> Self {
+        Self {
+            providers: Vec::new(),
+            redirect_port: None,
+            provider: None,
+            legacy_method: method.map(|m| m.to_string()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deprecated_field_names(&self) -> Vec<&'static str> {
+        self.deprecated_fields()
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AuthProviderOverride {
+    pub name: String,
+    #[serde(default)]
+    pub issuer: Option<Url>,
+    #[serde(default)]
+    pub authorization_endpoint: Option<Url>,
+    #[serde(default)]
+    pub token_endpoint: Option<Url>,
+    #[serde(default)]
+    pub device_authorization_endpoint: Option<Url>,
+    #[serde(default)]
+    pub jwks_uri: Option<Url>,
+    #[serde(default)]
+    pub userinfo_endpoint: Option<Url>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub flows: Option<Vec<AuthFlowPreference>>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthFlowPreference {
+    DeviceCode,
+    AuthCodePkce,
 }
 
 #[cfg(test)]
@@ -948,7 +1080,7 @@ mod tests {
 
     use eyre::Result;
 
-    use super::Timezone;
+    use super::{AuthClientSettings, Timezone};
 
     #[test]
     fn can_parse_offset_timezone_spec() -> Result<()> {
@@ -978,5 +1110,17 @@ mod tests {
         assert!(Timezone::from_str("10:30").is_err());
 
         Ok(())
+    }
+
+    #[test]
+    fn detects_deprecated_auth_keys() {
+        let auth = AuthClientSettings::with_deprecated(Some("oidc"));
+        assert_eq!(auth.deprecated_field_names(), vec!["method"]);
+    }
+
+    #[test]
+    fn no_deprecated_auth_keys_by_default() {
+        let auth = AuthClientSettings::default();
+        assert!(auth.deprecated_field_names().is_empty());
     }
 }

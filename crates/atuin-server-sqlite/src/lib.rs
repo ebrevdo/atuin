@@ -7,17 +7,20 @@ use atuin_common::{
 };
 use atuin_server_database::{
     Database, DbError, DbResult, DbSettings,
-    models::{History, NewHistory, NewSession, NewUser, Session, User},
+    models::{
+        ExternalIdentity, History, NewExternalIdentity, NewHistory, NewSession, NewUser, Session,
+        User,
+    },
 };
 use futures_util::TryStreamExt;
 use sqlx::{
     Row,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
-    types::Uuid,
+    types::{Json, Uuid},
 };
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use tracing::instrument;
-use wrappers::{DbHistory, DbRecord, DbSession, DbUser};
+use wrappers::{DbExternalIdentity, DbHistory, DbRecord, DbSession, DbUser};
 
 mod wrappers;
 
@@ -110,6 +113,16 @@ impl Database for Sqlite {
     }
 
     #[instrument(skip_all)]
+    async fn get_user_by_id(&self, id: i64) -> DbResult<User> {
+        sqlx::query_as("select id, username, email, password, verified_at from users where id = $1")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(fix_error)
+            .map(|DbUser(user)| user)
+    }
+
+    #[instrument(skip_all)]
     async fn get_user_session(&self, u: &User) -> DbResult<Session> {
         sqlx::query_as("select id, user_id, token from sessions where user_id = $1")
             .bind(u.id)
@@ -134,6 +147,27 @@ impl Database for Sqlite {
         .bind(username)
         .bind(email)
         .bind(password)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(fix_error)?;
+
+        Ok(res.0)
+    }
+
+    #[instrument(skip_all)]
+    async fn link_external_identity(&self, identity: &NewExternalIdentity) -> DbResult<i64> {
+        let claims = identity.display_claims.clone().map(Json);
+
+        let res: (i64,) = sqlx::query_as(
+            "insert into external_identities
+                (user_id, provider, subject, display_claims)
+            values ($1, $2, $3, $4)
+            returning id",
+        )
+        .bind(identity.user_id)
+        .bind(identity.provider.as_str())
+        .bind(identity.subject.as_str())
+        .bind(claims)
         .fetch_one(&self.pool)
         .await
         .map_err(fix_error)?;
@@ -338,6 +372,53 @@ impl Database for Sqlite {
         .map_err(fix_error)?;
 
         Ok(())
+    }
+
+    async fn get_external_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> DbResult<ExternalIdentity> {
+        sqlx::query_as(
+            "select id, user_id, provider, subject, display_claims, created_at, updated_at
+            from external_identities where provider = $1 and subject = $2",
+        )
+        .bind(provider)
+        .bind(subject)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(fix_error)
+        .map(|DbExternalIdentity(identity)| identity)
+    }
+
+    async fn list_external_identities(&self, user_id: i64) -> DbResult<Vec<ExternalIdentity>> {
+        sqlx::query_as(
+            "select id, user_id, provider, subject, display_claims, created_at, updated_at
+            from external_identities where user_id = $1 order by created_at asc",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(fix_error)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|DbExternalIdentity(identity)| identity)
+                .collect()
+        })
+    }
+
+    async fn unlink_external_identity(&self, identity_id: i64) -> DbResult<()> {
+        let result = sqlx::query("delete from external_identities where id = $1")
+            .bind(identity_id)
+            .execute(&self.pool)
+            .await
+            .map_err(fix_error)?;
+
+        if result.rows_affected() == 0 {
+            Err(DbError::NotFound)
+        } else {
+            Ok(())
+        }
     }
 
     #[instrument(skip_all)]
@@ -549,4 +630,167 @@ impl Database for Sqlite {
 fn into_utc(x: OffsetDateTime) -> PrimitiveDateTime {
     let x = x.to_offset(UtcOffset::UTC);
     PrimitiveDateTime::new(x.date(), x.time())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atuin_server_database::{
+        DbSettings,
+        models::{NewExternalIdentity, NewUser},
+    };
+    use serde_json::json;
+    use tempfile::NamedTempFile;
+
+    fn temp_db() -> (DbSettings, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp db file");
+        let uri = format!("sqlite://{}", file.path().to_string_lossy());
+        (DbSettings { db_uri: uri }, file)
+    }
+
+    fn sample_user(username: &str) -> NewUser {
+        NewUser {
+            username: username.to_string(),
+            email: format!("{username}@example.com"),
+            password: "irrelevant".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn link_and_fetch_identity_round_trip() {
+        let (settings, _file) = temp_db();
+        let db = Sqlite::new(&settings).await.expect("sqlite db");
+        let user_id = db
+            .add_user(&sample_user("linked-user"))
+            .await
+            .expect("user id");
+
+        let link = NewExternalIdentity {
+            user_id,
+            provider: "mock".into(),
+            subject: "subject-123".into(),
+            display_claims: None,
+        };
+
+        db.link_external_identity(&link)
+            .await
+            .expect("link identity");
+
+        let stored = db
+            .get_external_identity("mock", "subject-123")
+            .await
+            .expect("stored identity");
+
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.provider, "mock");
+        assert_eq!(stored.subject, "subject-123");
+    }
+
+    #[tokio::test]
+    async fn duplicate_identity_for_same_provider_fails() {
+        let (settings, _file) = temp_db();
+        let db = Sqlite::new(&settings).await.expect("sqlite db");
+        let user_id = db
+            .add_user(&sample_user("linked-user"))
+            .await
+            .expect("user id");
+
+        let link = NewExternalIdentity {
+            user_id,
+            provider: "mock".into(),
+            subject: "subject-123".into(),
+            display_claims: None,
+        };
+
+        db.link_external_identity(&link)
+            .await
+            .expect("link identity");
+
+        let err = db
+            .link_external_identity(&link)
+            .await
+            .expect_err("duplicate subject should fail");
+
+        match err {
+            DbError::Other(_) | DbError::NotFound => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn list_external_identities_returns_all_rows() {
+        let (settings, _file) = temp_db();
+        let db = Sqlite::new(&settings).await.expect("sqlite db");
+        let user_id = db
+            .add_user(&sample_user("list-user"))
+            .await
+            .expect("user id");
+
+        let first = NewExternalIdentity {
+            user_id,
+            provider: "mock".into(),
+            subject: "subject-1".into(),
+            display_claims: Some(json!({"username": "user1"})),
+        };
+
+        let second = NewExternalIdentity {
+            user_id,
+            provider: "mock".into(),
+            subject: "subject-2".into(),
+            display_claims: None,
+        };
+
+        db.link_external_identity(&first)
+            .await
+            .expect("link first identity");
+        db.link_external_identity(&second)
+            .await
+            .expect("link second identity");
+
+        let linked = db
+            .list_external_identities(user_id)
+            .await
+            .expect("list identities");
+
+        assert_eq!(linked.len(), 2);
+        assert_eq!(linked[0].subject, "subject-1");
+        assert_eq!(linked[1].subject, "subject-2");
+    }
+
+    #[tokio::test]
+    async fn unlink_external_identity_removes_row() {
+        let (settings, _file) = temp_db();
+        let db = Sqlite::new(&settings).await.expect("sqlite db");
+        let user_id = db
+            .add_user(&sample_user("unlink-user"))
+            .await
+            .expect("user id");
+
+        let record = NewExternalIdentity {
+            user_id,
+            provider: "mock".into(),
+            subject: "subject-removable".into(),
+            display_claims: None,
+        };
+
+        db.link_external_identity(&record)
+            .await
+            .expect("link identity");
+
+        let stored = db
+            .get_external_identity("mock", "subject-removable")
+            .await
+            .expect("stored identity");
+
+        db.unlink_external_identity(stored.id)
+            .await
+            .expect("unlink identity");
+
+        let err = db
+            .get_external_identity("mock", "subject-removable")
+            .await
+            .err()
+            .expect("identity should be removed");
+
+        assert!(matches!(err, DbError::NotFound));
+    }
 }

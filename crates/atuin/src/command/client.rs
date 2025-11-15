@@ -8,6 +8,8 @@ use atuin_client::{
 };
 use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*};
 
+use crate::runtime::CliRuntime;
+
 #[cfg(feature = "sync")]
 mod sync;
 
@@ -99,18 +101,10 @@ pub enum Cmd {
 
 impl Cmd {
     pub fn run(self) -> Result<()> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
+        let runtime = CliRuntime::new_current_thread()?;
         let settings = Settings::new().wrap_err("could not load client settings")?;
         let theme_manager = theme::ThemeManager::new(settings.theme.debug, None);
-        let res = runtime.block_on(self.run_inner(settings, theme_manager));
-
-        runtime.shutdown_timeout(std::time::Duration::from_millis(50));
-
-        res
+        runtime.block_on(self.run_inner(settings, theme_manager))
     }
 
     async fn run_inner(

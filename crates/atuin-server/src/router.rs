@@ -14,6 +14,7 @@ use tower_http::trace::TraceLayer;
 
 use super::handlers;
 use crate::{
+    auth::AuthRuntime,
     handlers::{ErrorResponseStatus, RespExt},
     metrics,
     settings::Settings,
@@ -106,9 +107,10 @@ async fn semver(request: Request, next: Next) -> Response {
 pub struct AppState<DB: Database> {
     pub database: DB,
     pub settings: Settings,
+    pub auth: AuthRuntime,
 }
 
-pub fn router<DB: Database>(database: DB, settings: Settings) -> Router {
+pub fn router<DB: Database>(database: DB, settings: Settings, auth: AuthRuntime) -> Router {
     let routes = Router::new()
         .route("/", get(handlers::index))
         .route("/healthz", get(handlers::health::health_check))
@@ -123,6 +125,7 @@ pub fn router<DB: Database>(database: DB, settings: Settings) -> Router {
         .route("/account/password", patch(handlers::user::change_password))
         .route("/register", post(handlers::user::register))
         .route("/login", post(handlers::user::login))
+        .route("/auth/providers", get(handlers::auth::providers))
         .route("/record", post(handlers::record::post))
         .route("/record", get(handlers::record::index))
         .route("/record/next", get(handlers::record::next))
@@ -144,7 +147,11 @@ pub fn router<DB: Database>(database: DB, settings: Settings) -> Router {
         Router::new().nest(path, routes)
     }
     .fallback(teapot)
-    .with_state(AppState { database, settings })
+    .with_state(AppState {
+        database,
+        settings,
+        auth,
+    })
     .layer(
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn(clacks_overhead))

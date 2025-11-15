@@ -1,6 +1,8 @@
-use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::time::Duration;
+mod login;
+
+pub use login::login;
+
+use std::{borrow::Borrow, collections::HashMap, time::Duration};
 
 use argon2::{
     Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version,
@@ -15,6 +17,7 @@ use metrics::counter;
 
 use postmark::{Query, reqwest::PostmarkClient};
 
+use eyre::{Report, eyre};
 use rand::rngs::OsRng;
 use tracing::{debug, error, info, instrument};
 
@@ -109,7 +112,7 @@ pub async fn register<DB: Database>(
         }
     }
 
-    let hashed = hash_secret(&register.password);
+    let hashed = hash_secret(&register.password).map_err(password_hash_error)?;
 
     let new_user = NewUser {
         email: register.email.clone(),
@@ -299,7 +302,7 @@ pub async fn change_password<DB: Database>(
         );
     }
 
-    let hashed = hash_secret(&change_password.new_password);
+    let hashed = hash_secret(&change_password.new_password).map_err(password_hash_error)?;
     user.password = hashed;
 
     if let Err(e) = db.update_user_password(&user).await {
@@ -311,57 +314,16 @@ pub async fn change_password<DB: Database>(
     Ok(Json(ChangePasswordResponse {}))
 }
 
-#[instrument(skip_all, fields(user.username = login.username.as_str()))]
-pub async fn login<DB: Database>(
-    state: State<AppState<DB>>,
-    login: Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, ErrorResponseStatus<'static>> {
-    let db = &state.0.database;
-    let user = match db.get_user(login.username.borrow()).await {
-        Ok(u) => u,
-        Err(DbError::NotFound) => {
-            return Err(ErrorResponse::reply("user not found").with_status(StatusCode::NOT_FOUND));
-        }
-        Err(DbError::Other(e)) => {
-            error!("failed to get user {}: {}", login.username.clone(), e);
-
-            return Err(ErrorResponse::reply("database error")
-                .with_status(StatusCode::INTERNAL_SERVER_ERROR));
-        }
-    };
-
-    let session = match db.get_user_session(&user).await {
-        Ok(u) => u,
-        Err(DbError::NotFound) => {
-            debug!("user session not found for user id={}", user.id);
-            return Err(ErrorResponse::reply("user not found").with_status(StatusCode::NOT_FOUND));
-        }
-        Err(DbError::Other(err)) => {
-            error!("database error for user {}: {}", login.username, err);
-            return Err(ErrorResponse::reply("database error")
-                .with_status(StatusCode::INTERNAL_SERVER_ERROR));
-        }
-    };
-
-    let verified = verify_str(user.password.as_str(), login.password.borrow());
-
-    if !verified {
-        debug!(user = user.username, "login failed");
-        return Err(
-            ErrorResponse::reply("password is not correct").with_status(StatusCode::UNAUTHORIZED)
-        );
-    }
-
-    debug!(user = user.username, "login success");
-
-    Ok(Json(LoginResponse {
-        session: session.token,
-    }))
-}
-
-fn hash_secret(password: &str) -> String {
+fn hash_secret(password: &str) -> eyre::Result<String> {
     let arg2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default());
     let salt = SaltString::generate(&mut OsRng);
-    let hash = arg2.hash_password(password.as_bytes(), &salt).unwrap();
-    hash.to_string()
+    let hash = arg2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|error| eyre!("argon2 hashing failed: {error}"))?;
+    Ok(hash.to_string())
+}
+
+fn password_hash_error(error: Report) -> ErrorResponseStatus<'static> {
+    error!(error = ?error, "failed to hash password");
+    ErrorResponse::reply("failed to hash password").with_status(StatusCode::INTERNAL_SERVER_ERROR)
 }

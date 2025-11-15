@@ -11,7 +11,10 @@ use std::{
 
 use self::{
     calendar::{TimePeriod, TimePeriodInfo},
-    models::{History, NewHistory, NewSession, NewUser, Session, User},
+    models::{
+        ExternalIdentity, History, NewExternalIdentity, NewHistory, NewSession, NewUser, Session,
+        User,
+    },
 };
 use async_trait::async_trait;
 use atuin_common::record::{EncryptedData, HostId, Record, RecordIdx, RecordStatus};
@@ -95,8 +98,10 @@ pub trait Database: Sized + Clone + Send + Sync + 'static {
     async fn add_session(&self, session: &NewSession) -> DbResult<()>;
 
     async fn get_user(&self, username: &str) -> DbResult<User>;
+    async fn get_user_by_id(&self, id: i64) -> DbResult<User>;
     async fn get_user_session(&self, u: &User) -> DbResult<Session>;
     async fn add_user(&self, user: &NewUser) -> DbResult<i64>;
+    async fn link_external_identity(&self, identity: &NewExternalIdentity) -> DbResult<i64>;
 
     async fn user_verified(&self, id: i64) -> DbResult<bool>;
     async fn verify_user(&self, id: i64) -> DbResult<()>;
@@ -112,6 +117,15 @@ pub trait Database: Sized + Clone + Send + Sync + 'static {
     async fn delete_history(&self, user: &User, id: String) -> DbResult<()>;
     async fn deleted_history(&self, user: &User) -> DbResult<Vec<String>>;
     async fn delete_store(&self, user: &User) -> DbResult<()>;
+
+    async fn get_external_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> DbResult<ExternalIdentity>;
+
+    async fn list_external_identities(&self, user_id: i64) -> DbResult<Vec<ExternalIdentity>>;
+    async fn unlink_external_identity(&self, identity_id: i64) -> DbResult<()>;
 
     async fn add_records(&self, user: &User, record: &[Record<EncryptedData>]) -> DbResult<()>;
     async fn next_records(

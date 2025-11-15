@@ -4,13 +4,15 @@ services:
     image: ghcr.io/atuinsh/atuin:<LATEST TAGGED RELEASE>
     command: server start
     volumes:
-      - "./config:/config"
+      - "./config:/config" # place server.toml here (set auth.allow_password/auth.providers)
     ports:
       - 8888:8888
     environment:
       ATUIN_HOST: "0.0.0.0"
       ATUIN_OPEN_REGISTRATION: "true"
       ATUIN_DB_URI: postgres://{$ATUIN_DB_USERNAME}:${ATUIN_DB_PASSWORD}@db/${ATUIN_DB_NAME}
+      # When using external auth, disable passwords and configure providers in server.toml
+      # ATUIN_AUTH_ALLOW_PASSWORD: "false"
       RUST_LOG: info,atuin_server=debug
     depends_on:
       - db

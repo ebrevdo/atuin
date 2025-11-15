@@ -8,6 +8,7 @@ pub mod api_client;
 #[cfg(feature = "sync")]
 pub mod sync;
 
+pub mod auth;
 pub mod database;
 pub mod encryption;
 pub mod history;

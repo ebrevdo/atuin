@@ -22,6 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 axum = "0.7"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
@@ -35,3 +36,14 @@ semver = { workspace = true }
 metrics-exporter-prometheus = "0.17"
 metrics = "0.24"
 postmark = {version= "0.11", features=["reqwest", "reqwest-rustls-tls"]}
+openidconnect = { version = "4", default-features = false, features = ["rustls-tls"] }
+base64 = { workspace = true }
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+atuin-server-sqlite = { path = "../atuin-server-sqlite", version = "18.10.0" }
+tempfile = { workspace = true }
+auth-test-support = { path = "../auth-test-support" }

@@ -33,3 +33,48 @@
 # enable = false
 # cert_path = ""
 # pkey_path = ""
+
+# [auth]
+# # Password-only mode (default): allow password login, no external providers
+# allow_password = true
+#
+# # Optional cache for provider metadata/JWKS; defaults to <data dir>/auth-cache and 8 MiB limit
+# # cache_dir = "/var/lib/atuin/auth-cache"
+# # cache_max_bytes = 8388608
+#
+# # External provider mode: disable passwords and list one or more providers
+# # allow_password = false
+# # default_provider = "azure-ad" # optional; must match one of the providers below
+# #
+# # [[auth.providers]]
+# # name = "azure-ad"
+# # display_name = "Azure AD"       # optional, shown to clients
+# # kind = "oidc"                   # oidc | oauth2 (defaults to oidc)
+# # issuer = "https://login.microsoftonline.com/{tenant-id}/v2.0"
+# # client_id = ""
+# # # client_secret = ""            # optional; only needed for auth_code_pkce
+# # scopes = ["openid", "profile", "offline_access"]
+# # subject_claims = ["sub", "id", "user_id"] # used to derive the stable subject key
+# # flows = ["device_code"]         # device_code | auth_code_pkce
+# # # device_authorization_endpoint = "" # required for oauth2 + device_code when not in discovery
+# # # Optional security filters (recommended for Azure AD):
+# # # required_issuer = "https://login.microsoftonline.com/{tenant-id}/v2.0" # matches iss
+# # # required_audience = ["{client-id-guid}"] # matches aud
+# # # required_tenant = "{tenant-id-guid}" # matches tid
+# # # required_claims = { tfp = "B2C_1_signupsignin" } # any extra claims to assert
+# # # auto_provision = true          # default: true; create users on first login
+#
+# # Alternative oauth2 example:
+# # [[auth.providers]]
+# # name              = "github"
+# # kind              = "oauth2"
+# # client_id         = ""
+# # client_secret     = ""
+# # authorization_endpoint      = "https://github.com/login/oauth/authorize"
+# # token_endpoint              = "https://github.com/login/oauth/access_token"
+# # device_authorization_endpoint = "https://github.com/login/device/code"
+# # userinfo_endpoint           = "https://api.github.com/user"
+# # scopes            = ["read:user"]
+# # subject_claims    = ["id"]       # GitHub user API returns `id`
+# # flows             = ["device_code"]
+# # # required_claims = { type = "User" }

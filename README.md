@@ -76,6 +76,8 @@ I wanted to. And I **really** don't want to.
 - [Setting up sync](https://docs.atuin.sh/guide/sync/)
 - [Import history](https://docs.atuin.sh/guide/import/)
 - [Basic usage](https://docs.atuin.sh/guide/basic-usage/)
+- [Self-hosting auth](#self-hosting-auth)
+- [Client login](#client-login)
 ## Supported Shells
 
 - zsh
@@ -93,6 +95,38 @@ Atuin has a community forum, please ask here for help and support: https://forum
 ### Discord
 
 Atuin also has a community Discord, available [here](https://discord.gg/jR3tfchVvW)
+
+# Client login
+
+- `atuin login` will use password auth if the server still allows it; otherwise it follows the provider(s) the server advertises.
+- If multiple providers exist, pass `--provider <name>` or set `auth.provider = "<name>"` in `~/.config/atuin/config.toml` to skip the prompt.
+- Browser/device flows:
+  - `device_code` (default) shows a code and URL; paste the URL in a browser and complete sign-in.
+  - `auth_code_pkce` opens a local browser; use `auth.redirect_port` in `config.toml` if you need a specific callback port.
+- Client-side overrides (optional): `[[auth.providers]]` blocks in `config.toml` can supply client IDs/secrets or endpoints when the server requires a matching provider override (names must match the server’s provider names).
+- Deprecated client keys like `auth.method` are ignored; the server decides which auth methods are allowed.
+
+# Self-hosting auth
+
+For self-hosted servers, auth now has two modes:
+
+- Password-only (default): `auth.allow_password = true`, no providers configured.
+- External providers: set `auth.allow_password = false` and add one or more `auth.providers` entries. You can set `auth.default_provider` when multiple providers exist.
+
+Provider basics:
+
+- `kind`: `oidc` (default) or `oauth2`
+- Flows: `device_code` (default) or `auth_code_pkce`; OAuth2 + `device_code` requires `device_authorization_endpoint` if discovery does not expose it.
+- `subject_claims`: claims used to derive the stable subject key (defaults to `["sub", "id", "user_id"]`).
+- Optional guards: `required_issuer`, `required_audience`, `required_tenant`, `required_claims`.
+- Auto-provisioning: on by default (`auto_provision = true`).
+
+Caching:
+
+- Provider metadata/JWKS snapshots default to `<data dir>/auth-cache`; override with `auth.cache_dir`.
+- Snapshots larger than 8 MiB are ignored; override with `auth.cache_max_bytes`.
+
+The sample config shipped with the server binary (`crates/atuin-server/server.toml`) shows complete `oidc` and `oauth2` blocks. The runtime config is read from `~/.config/atuin/server.toml` (or `ATUIN_CONFIG_DIR`).
 
 # Quickstart
 

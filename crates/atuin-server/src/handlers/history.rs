@@ -128,7 +128,9 @@ pub async fn add<DB: Database>(
     state: State<AppState<DB>>,
     Json(req): Json<Vec<AddHistoryRequest>>,
 ) -> Result<(), ErrorResponseStatus<'static>> {
-    let State(AppState { database, settings }) = state;
+    let State(AppState {
+        database, settings, ..
+    }) = state;
 
     debug!("request to add {} history items", req.len());
     counter!("atuin_history_uploaded").increment(req.len() as u64);

@@ -10,7 +10,9 @@ User=atuin
 Group=atuin
 
 Environment=ATUIN_CONFIG_DIR=/etc/atuin
-ReadWritePaths=/etc/atuin
+# Allow writing config and auth cache (adjust if you set auth.cache_dir elsewhere)
+ReadWritePaths=/etc/atuin /var/lib/atuin/auth-cache
+# Set ATUIN_AUTH_ALLOW_PASSWORD=false when running with external providers; place provider config in /etc/atuin/server.toml
 
 # Hardening options
 CapabilityBoundingSet=

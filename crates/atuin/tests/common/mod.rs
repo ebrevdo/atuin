@@ -40,6 +40,7 @@ pub async fn start_server(path: &str) -> (String, oneshot::Sender<()>, JoinHandl
         metrics: atuin_server::settings::Metrics::default(),
         tls: atuin_server::settings::Tls::default(),
         mail: atuin_server::settings::Mail::default(),
+        auth: atuin_server::settings::AuthSettings::default(),
         fake_version: None,
     };
 
@@ -87,7 +88,7 @@ pub async fn login(address: &str, username: String, password: String) -> api_cli
     // registration works
     let login_response = api_client::login(
         address,
-        atuin_common::api::LoginRequest { username, password },
+        atuin_common::api::LoginRequest::Password { username, password },
     )
     .await
     .unwrap();
